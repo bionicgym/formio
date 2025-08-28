@@ -2,6 +2,7 @@
 
 const _ = require('lodash');
 const debug = require('debug')('formio:models:form');
+const {Utils: CoreUtils} = require('@formio/core');
 
 module.exports = (formio) => {
   const hook = require('../util/hook')(formio);
@@ -23,9 +24,24 @@ module.exports = (formio) => {
 
   const componentPaths = (components) => {
     const paths = [];
-    util.eachComponent(components, (component, path) => {
-      if (util.isInputComponent(component) && !_.isUndefined(component.key) && !_.isNull(component.key)) {
-        paths.push(path);
+    util.eachComponent(components, (component, fullPath, components, parent, compPaths) => {
+      const path = compPaths.fullPath;
+      const componentInfo = CoreUtils.componentInfo(component);
+      if (
+        !componentInfo.layout &&
+        !_.isUndefined(component.key) &&
+        !_.isNull(component.key)
+      ) {
+        // Checkboxes configured as radios are the only components allowed to have the same path.
+        if (component.type === 'checkbox' && component.inputType === 'radio') {
+          const found = _.find(paths, (p) => p === path);
+          if (!found) {
+            paths.push(path);
+          }
+        }
+        else {
+          paths.push(path);
+        }
       }
     }, true);
     return _(paths);
@@ -212,6 +228,10 @@ module.exports = (formio) => {
             }
           }
         ]
+      },
+      pdfComponents: {
+        type: [formio.mongoose.Schema.Types.Mixed],
+        description: 'An array of components within the form displayed on the PDF Download page.'
       },
       settings: {
         type: formio.mongoose.Schema.Types.Mixed,

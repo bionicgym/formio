@@ -6,7 +6,7 @@
   "allowedOrigins": ["*"],
   "domain": "http://localhost:3001",
   "basePath": "",
-  "mongo": "mongodb://localhost:27017/formioapp",
+  "mongo": "mongodb://localhost:27017/formio-ce",
   "mongoConfig": "",
   "mongoCA": "",
   "mongoSecret": "--- change me now ---",
@@ -21,7 +21,24 @@
     "form",
     "access",
     "token",
-    "recaptcha"
+    "recaptcha",
+    "captcha"
+  ],
+  "reservedProjects": [
+    "submission",
+    "exists",
+    "export",
+    "role",
+    "current",
+    "logout",
+    "form",
+    "access",
+    "token",
+    "recaptcha",
+    "captcha",
+    "action",
+    "actionItem",
+    "tag"
   ],
   "jwt": {
     "secret": "--- change me now ---",

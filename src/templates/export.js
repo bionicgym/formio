@@ -3,7 +3,7 @@
 const async = require('async');
 const _ = require('lodash');
 const util = require('../util/util');
-const EVERYONE = '000000000000000000000000';
+const EVERYONE_ROLE = {_id: '000000000000000000000000', title: 'Everyone', machineName: 'everyone'};
 
 /**
  * Perform an export of a specified template.
@@ -20,7 +20,7 @@ module.exports = (router) => {
     _.each(perms, function(access) {
       _.each(access.roles, function(roleId, i) {
         roleId = roleId.toString();
-        if (roleId === EVERYONE) {
+        if (roleId === EVERYONE_ROLE._id) {
           access.roles[i] = 'everyone';
         }
         else if (_map.roles && _map.roles.hasOwnProperty(roleId)) {
@@ -37,7 +37,7 @@ module.exports = (router) => {
     }
 
     if (entity.hasOwnProperty('role')) {
-      if (entity.role.toString() === EVERYONE) {
+      if (entity.role.toString() === EVERYONE_ROLE._id) {
         entity.role = 'everyone';
       }
       else if (_map.roles && _map.roles.hasOwnProperty(entity.role)) {
@@ -81,51 +81,51 @@ module.exports = (router) => {
   };
 
   // Export actions.
-  const exportActions = function(_export, _map, options, next) {
-    formio.actions.model.find({
+  const exportActions = async function(_export, _map, options, next) {
+    try {
+      const actions = await formio.actions.model.find({
         form: {$in: _.keys(_map.forms)},
         deleted: {$eq: null}
       })
       .lean(true)
-      .exec(function(err, actions) {
-        if (err) {
-          return next(err);
-        }
-        _.each(actions, function(action, index) {
-          assignForm(_map, action);
-          assignRole(_map, action.settings);
-          assignResource(_map, action.settings);
-          assignResources(_map, action.settings);
-          const machineName = action.machineName = hook.alter('machineNameExport', action.machineName);
-          _export.actions[machineName] = _.pick(action,
-            'title',
-            'name',
-            'form',
-            'condition',
-            'settings',
-            'priority',
-            'method',
-            'handler'
-          );
-        });
-        next();
+      .exec();
+
+      _.each(actions, function(action, index) {
+        assignForm(_map, action);
+        assignRole(_map, action.settings);
+        assignResource(_map, action.settings);
+        assignResources(_map, action.settings);
+        const machineName = action.machineName = hook.alter('machineNameExport', action.machineName);
+        _export.actions[machineName] = _.pick(action,
+          'title',
+          'name',
+          'form',
+          'condition',
+          'settings',
+          'priority',
+          'method',
+          'handler'
+        );
       });
+      return next();
+    }
+    catch (err) {
+      return next(err);
+    }
   };
 
   // Export forms.
-  const exportForms = function(_export, _map, options, next) {
+  const exportForms = async function(_export, _map, options, next) {
     let includeFormFields = [];
     if (options && options.includeFormFields) {
       includeFormFields = options.includeFormFields;
     }
 
-    formio.resources.form.model
-      .find(hook.alter('formQuery', {deleted: {$eq: null}}, options))
-      .lean(true)
-      .exec(function(err, forms) {
-        if (err) {
-          return next(err);
-        }
+    try {
+      const forms = await formio.resources.form.model
+        .find(await hook.alter('formQuery', {deleted: {$eq: null}}, options))
+        .lean(true)
+        .exec();
         _.each(forms, function(form) {
           if (!form || !form._id) {
             return;
@@ -138,6 +138,7 @@ module.exports = (router) => {
             'type',
             'name',
             'path',
+            'pdfComponents',
             'display',
             'action',
             'tags',
@@ -148,6 +149,8 @@ module.exports = (router) => {
             'properties',
             'controller',
             'submissionRevisions',
+            'revisions',
+            'esign',
             ...includeFormFields,
           );
           if (form.revisions) {
@@ -174,6 +177,16 @@ module.exports = (router) => {
             if (component && component.project) {
               component.project = 'project';
             }
+            // During export if select component
+            // data type resource de-ref defaultValue
+            if (
+              component
+              && component.type === 'select'
+              && component.dataSrc === 'resource'
+              && component.defaultValue
+            ) {
+              component.defaultValue = undefined;
+            }
 
             if (component.hasOwnProperty('form') && component.revision) {
               _map.revisions.revisionsData.push(component);
@@ -182,26 +195,25 @@ module.exports = (router) => {
             hook.alter('exportComponent', component);
           });
         });
-        next();
-      });
+        return next();
+    }
+    catch (err) {
+      return next(err);
+    }
   };
 
   // Export reports.
-  const exportReports = function(_export, _map, options, next) {
+  const exportReports = async function(_export, _map, options, next) {
     const reportingConfigurationFormId = _.findKey(_map.forms, name => name === 'reportingui');
 
     if (!reportingConfigurationFormId) {
       return next();
     }
-
-    formio.resources.submission.model
-      .find(hook.alter('submissionQuery', {form: reportingConfigurationFormId, deleted: {$eq: null}}, options))
-      .lean(true)
-      .exec(function(err, reports) {
-        if (err) {
-          return next(err);
-        }
-
+    try {
+      const reports = await formio.resources.submission.model
+        .find(hook.alter('submissionQuery', {form: reportingConfigurationFormId, deleted: {$eq: null}}, options))
+        .lean(true)
+        .exec();
         _.each(reports, report =>  {
           if (!report || !report.data) {
             return;
@@ -220,11 +232,14 @@ module.exports = (router) => {
           _export.reports[_.get(formattedReport, 'data.name', '')] = formattedReport;
         });
 
-        next();
-      });
+        return next();
+    }
+    catch (err) {
+      return next(err);
+    }
   };
 
-  const exportRevisions = function(_export, _map, options, next) {
+  const exportRevisions = async function(_export, _map, options, next) {
     if (_map.revisions.revisionsData.length > 0) {
       let includeFormFields = [];
       if (options && options.includeFormFields) {
@@ -235,6 +250,8 @@ module.exports = (router) => {
         if (revision.revision.length === 24) {
           revisionsArray.push({
             _id: formio.util.idToBson(revision.revision)
+          }, {
+            revisionId: formio.util.idToBson(revision.revision)
           });
         }
         else {
@@ -255,12 +272,9 @@ module.exports = (router) => {
           deleted: {$eq: null},
           $or: revisionsArray
         };
-        return hook.alter('formRevisionModel').find(query)
-          .lean(true)
-          .exec((err, revisions) => {
-            if (err) {
-              return next(err);
-            }
+        try {
+          const revisions = await hook.alter('formRevisionModel').find(query)
+            .lean(true);
             if (
               revisions && revisions.length > 0
               && _map.revisions.revisionsData.length > 0
@@ -278,6 +292,7 @@ module.exports = (router) => {
                     'type',
                     'name',
                     'path',
+                    'pdfComponents',
                     'display',
                     'action',
                     'tags',
@@ -288,7 +303,9 @@ module.exports = (router) => {
                     'properties',
                     'controller',
                     'submissionRevisions',
+                    'esign',
                     '_vid',
+                    'revisionId',
                     ...includeFormFields
                   );
                   const form = _map.revisions.formsWithEnabledRevisions
@@ -300,7 +317,10 @@ module.exports = (router) => {
               });
             }
             return next();
-          });
+        }
+        catch (err) {
+          return next(err);
+        }
       }
       return next();
     }
@@ -309,30 +329,35 @@ module.exports = (router) => {
     }
   };
   // Export the roles.
-  const exportRoles = function(_export, _map, options, next) {
-    formio.resources.role.model
-      .find(hook.alter('roleQuery', {deleted: {$eq: null}}, options))
-      .lean(true)
-      .exec(function(err, roles) {
-        if (err) {
-          return next(err);
-        }
-        _.each(roles, function(role) {
+
+  const exportRoles = async function(_export, _map, options, next) {
+    try {
+      const roles = await formio.resources.role.model
+        .find(hook.alter('roleQuery', {deleted: {$eq: null}}, options))
+        .lean(true)
+        .exec();
+
+        _.each([...roles, EVERYONE_ROLE], function(role) {
           if (!role || !role._id) {
             return;
           }
           const machineName = role.machineName = hook.alter('machineNameExport', role.machineName);
-          _export.roles[machineName] = _.pick(role,
-            'title',
-            'description',
-            'admin',
-            'default'
-          );
+          if (role._id !== EVERYONE_ROLE._id) {
+            _export.roles[machineName] = _.pick(role,
+              'title',
+              'description',
+              'admin',
+              'default'
+            );
+          }
           _map.roles[role._id.toString()] = machineName;
         });
 
-        next();
-      });
+        return next();
+    }
+    catch (err) {
+      return next(err);
+    }
   };
 
   /**
@@ -392,8 +417,8 @@ module.exports = (router) => {
 
   // Add the export endpoint
   if (router.get) {
-    router.get('/export', (req, res, next) => {
-      const options = hook.alter('exportOptions', {}, req, res);
+    router.get('/export', async (req, res, next) => {
+      const options = await hook.alter('exportOptions', {}, req, res);
       if (options) {
         options.includeFormFields = (req.query.include && req.query.include.split(',').filter((field) => !!field));
       }
